@@ -1,0 +1,143 @@
+## 模型文件夹 SAC 
+** DRL.py **
+基于Soft Actor-Critic (SAC) 算法的强化学习实现，用于训练深度强化学习模型。
+————初始化方法 (__init__)
+初始化设备：确定使用CPU还是GPU。
+超参数设置：包括学习率、缓冲区大小、折扣因子等。
+随机种子设置：确保实验的可重复性。
+Replay Buffer：初始化经验回放缓冲区，并在需要时初始化专家缓冲区。
+Critic 网络：根据选择的类型（普通网络或Transformer）初始化Critic网络及其优化器。
+Policy 网络：根据选择的类型（高斯策略或确定性策略）初始化Policy网络及其优化器。
+————选择动作方法 (choose_action)
+根据当前状态（istate和pstate），选择一个动作。如果evaluate为False，则从策略中采样一个动作；如果为True，则返回策略的确定性动作。
+————学习指导方法 (learn_guidence)
+从Replay Buffer中采样数据进行训练。如果存在专家缓冲区，则从中采样部分数据并合并到训练数据中。计算Critic和Policy的损失，并进行参数更新。同时，还包含了自动调节熵系数的功能。
+————普通学习方法 (learn)
+从Replay Buffer中采样数据进行训练，不考虑专家缓冲区。与learn_guidence方法类似，计算Critic和Policy的损失，并进行参数更新。同时，也包含了自动调节熵系数的功能。
+————存储转换方法 (store_transition 和 initialize_expert_buffer)
+这些方法用于将新的经验（状态、动作、奖励等）存储到Replay Buffer或专家缓冲区中。
+————模型保存和加载方法 (save_model, load_model, save, load, load_target, load_actor)
+用于保存和加载模型的参数。可以将训练好的模型保存到文件中，也可以从文件中加载模型参数，以便继续训练或进行评估。
+
+要修改上述代码以使用不同的网络架构或其他方法，您需要关注以下几个主要部分：
+### 1. 网络定义部分
+您可以修改`got_sac_network.py`文件中的网络定义，也可以在当前文件中添加新的网络结构。
+- **网络定义**：
+  - 如果要使用新的Q网络或策略网络，可以在`SAC/got_sac_network.py`文件中定义新的类。例如：
+    ```python
+    class NewQNetwork(nn.Module):
+        def __init__(self, action_dim, pstate_dim, ...):
+            super(NewQNetwork, self).__init__()
+            # 定义新的网络层
+
+        def forward(self, state_action):
+            # 定义前向传播逻辑
+            pass
+    ```
+  - 修改SAC类中的初始化部分以使用新定义的网络：
+    ```python
+    from SAC.got_sac_network import NewQNetwork, NewPolicyNetwork
+
+    class SAC(object):
+        def __init__(self, ...):
+            ...
+            if self.critic_type == "NewNetwork":
+                self.critic = NewQNetwork(self.action_dim, self.pstate_dim).to(self.device)
+                self.critic_optim = Adam(self.critic.parameters(), LR_C)
+                self.critic_target = NewQNetwork(self.action_dim, self.pstate_dim).to(self.device)
+                hard_update(self.critic_target, self.critic)
+            ...
+            
+            if self.policy_type == "NewPolicy":
+                self.policy = NewPolicyNetwork(self.action_dim, self.pstate_dim).to(self.device)
+                self.policy_optim = Adam(self.policy.parameters(), lr=LR_A)
+            ...
+    ```
+### 2. 损失函数和优化器
+如果要使用新的损失函数或优化方法，您可以修改`learn`和`learn_guidence`方法中的相应部分。
+
+- **修改Critic和Policy损失计算**：
+  ```python
+  def learn(self, batch_size=64):
+      ...
+      qf1, qf2 = self.critic([istates, pstates, actions])
+      custom_qf1_loss = custom_loss_function(qf1, next_q_value)  # 使用自定义的损失函数
+      custom_qf2_loss = custom_loss_function(qf2, next_q_value)
+      qf_loss = custom_qf1_loss + custom_qf2_loss
+      ...
+      
+      policy_loss = custom_policy_loss_function(min_qf_pi, log_pi)  # 使用自定义的策略损失函数
+      ...
+  ```
+
+- **修改优化器**：
+  ```python
+  def __init__(self, ...):
+      ...
+      self.critic_optim = CustomOptimizer(self.critic.parameters(), LR_C)  # 使用自定义优化器
+      self.policy_optim = CustomOptimizer(self.policy.parameters(), lr=LR_A)  # 使用自定义优化器
+      ...
+  ```
+
+### 3. 新增功能模块
+如果需要新增功能模块，例如不同的Replay Buffer或其他增强技术，可以相应地修改类的初始化和方法部分。
+
+- **修改Replay Buffer**：
+  - 定义新的Replay Buffer类：
+    ```python
+    from cpprb import ReplayBuffer
+
+    class NewReplayBuffer(ReplayBuffer):
+        def __init__(self, size, env_dict):
+            super().__init__(size, env_dict)
+            # 定义新的缓冲区行为
+    ```
+
+  - 在SAC类中使用新的Replay Buffer：
+    ```python
+    class SAC(object):
+        def __init__(self, ...):
+            ...
+            self.replay_buffer = NewReplayBuffer(BUFFER_SIZE, {
+                "obs": {"shape": (128,160,4)},
+                "act": {"shape": action_dim},
+                ...
+            })
+            ...
+    ```
+
+### 4. 数据处理和预处理
+如果需要对数据进行额外的预处理或后处理，可以在数据存储或采样时添加相应的代码。
+
+- **数据存储**：
+  ```python
+  def store_transition(self, s, a, ps, ps_, r, s_, engage, a_exp, d=0):
+      preprocessed_s = custom_preprocess(s)  # 对数据进行预处理
+      self.replay_buffer.add(
+          obs=preprocessed_s,
+          act=a,
+          ...
+      )
+  ```
+
+- **数据采样**：
+  ```python
+  def learn(self, batch_size=64):
+      data = self.replay_buffer.sample(batch_size)
+      processed_istates = custom_preprocess(data['obs'])  # 对数据进行后处理
+      ...
+  ```
+
+### 5. 调试和验证
+确保在每次修改后，对代码进行充分的调试和验证，确保新加入的模块或方法能够正常工作并提升模型的性能。
+
+### 6. 其他改动
+如果需要对整个框架进行大的改动，例如更换算法，可以根据需要进行更多的代码重构。
+
+### 综上所述：
+- 修改网络架构需要在`got_sac_network.py`中定义新的网络类，并在SAC类中引用。
+- 修改损失函数和优化方法可以直接在`learn`和`learn_guidence`方法中进行。
+- 添加新功能模块可以通过定义新类并在SAC类中引用实现。
+- 数据处理和预处理可以在存储和采样数据时进行修改。
+
+这些改动需要根据具体需求和目标进行。祝你修改顺利！如果有任何具体问题，欢迎随时提问。
